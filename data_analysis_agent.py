@@ -257,6 +257,10 @@ def main():
     st.set_page_config(layout="wide")
     if "plots" not in st.session_state:
         st.session_state.plots = []
+    if "insights" not in st.session_state:
+        st.session_state.insights = {}
+    if "current_files" not in st.session_state:
+        st.session_state.current_files = []
 
     header_col1, header_col2 = st.columns([4, 1])
     with header_col1:
@@ -274,44 +278,58 @@ def main():
         
         with content_col:
             st.header("1️⃣ Upload & Inspect Your CSV")
-            files = st.file_uploader("Choose one or more CSV files", type=["csv"], accept_multiple_files=True)
-            
-            if files:
-                filenames = [f.name for f in files]
-                if ("dfs" not in st.session_state) or (st.session_state.get("current_file") != filenames):
-                    st.session_state.dfs = [pd.read_csv(f) for f in files]
-                    st.session_state.current_files = filenames
-                    st.session_state.df = pd.concat(st.session_state.dfs, ignore_index=True, sort=False)
-                    # Create one subtab per file
-                file_tabs = st.tabs(filenames)
-                for idx, file_tab in enumerate(file_tabs):
-                    with file_tab:
-                        df_i = st.session_state.dfs[idx]
+            files = st.file_uploader(
+                "Choose one or more CSV files",
+                type=["csv"],
+                accept_multiple_files=True
+            )
 
-                        st.subheader(f"File: {filenames[idx]}")
-                        # data‐preview selector
-                        inspect_option = st.radio(
-                            "Choose data to display:",
-                            options=["First 5 rows", "Last 5 rows", "Random 5 rows"],
-                            index=0,
-                            key=f"inspect_{filenames[idx]}"
-                        )
-                        if inspect_option == "First 5 rows":
-                            preview_data = df_i.head()
-                        elif inspect_option == "Last 5 rows":
-                            preview_data = df_i.tail()
-                        else:
-                            preview_data = df_i.sample(5, random_state=42)
-
-                        st.dataframe(preview_data, use_container_width=False)
-
-                        # insights for this file
-                        with st.spinner(f"Generating insights for {filenames[idx]} …"):
-                            insights_i = DataInsightAgent(df_i)
-                        st.markdown("### Dataset Insights")
-                        st.markdown(insights_i)
-            else:
+            if not files:
                 st.info("Upload a CSV file to start analyzing your data.")
+                return
+
+            # Build filenames list
+            filenames = [f.name for f in files]
+
+            # ONLY when the file list changes do we reload & recompute insights
+            if st.session_state.current_files != filenames:
+                st.session_state.current_files = filenames
+                # load dataframes
+                st.session_state.dfs = [pd.read_csv(f) for f in files]
+                st.session_state.df = pd.concat(st.session_state.dfs, ignore_index=True, sort=False)
+
+                # compute ALL insights exactly once
+                st.session_state.insights = {}
+                with st.spinner("Loading…"):
+                    for fname, df_i in zip(filenames, st.session_state.dfs):
+                        st.session_state.insights[fname] = DataInsightAgent(df_i)
+
+            # Now display each file in its own sub-tab, WITHOUT calling DataInsightAgent again
+            file_tabs = st.tabs(filenames)
+            for idx, fname in enumerate(filenames):
+                df_i = st.session_state.dfs[idx]
+                with file_tabs[idx]:
+                    st.subheader(f"File: {fname}")
+
+                    # Preview radio only affects the preview DataFrame
+                    choice = st.radio(
+                        "Choose data to display:",
+                        ["First 5 rows", "Last 5 rows", "Random 5 rows"],
+                        index=0,
+                        key=f"inspect_{fname}"
+                    )
+                    if choice == "First 5 rows":
+                        preview = df_i.head()
+                    elif choice == "Last 5 rows":
+                        preview = df_i.tail()
+                    else:
+                        preview = df_i.sample(5, random_state=42)
+
+                    st.dataframe(preview, use_container_width=False)
+
+                    # Display the *precomputed* insight—no spinner here!
+                    st.markdown("### Dataset Insights")
+                    st.markdown(st.session_state.insights[fname])
 
     with tab2:
         left_margin, content_col, right_margin = st.columns([1, 4, 1])
